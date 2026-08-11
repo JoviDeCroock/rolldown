@@ -198,15 +198,15 @@ impl LinkStage<'_> {
     //
     //
     let strict_execution_order = self.options.is_strict_execution_order_enabled();
-    for (
-      module_idx,
-      mut extended_dependencies,
-      indirect_reexport_load_dependencies,
-      runtime_helper,
-    ) in processed_module_results
+    for (module_idx, extended_dependencies, indirect_reexport_load_dependencies, runtime_helper) in
+      processed_module_results
     {
-      // Set insertion order is not semantically observed by downstream dependency consumers.
-      extended_dependencies.extend(indirect_reexport_load_dependencies.iter().copied());
+      let symbol_dependencies = || {
+        extended_dependencies
+          .iter()
+          .copied()
+          .chain(indirect_reexport_load_dependencies.iter().copied())
+      };
       // Symbol-derived dependencies always force their owner module to be loaded. Import-record
       // targets (what `meta.dependencies` holds at this point) only do so when evaluating them
       // has side effects — the same edge semantics `include_side_effectful_dependencies` uses
@@ -219,9 +219,7 @@ impl LinkStage<'_> {
       // barrel that is also a dynamic entry must not push its re-export targets into a separate
       // chunk, see rollup's `entry-without-code-dynamic`).
       let execution_dependencies = strict_execution_order.then(|| {
-        extended_dependencies
-          .iter()
-          .copied()
+        symbol_dependencies()
           .chain(self.metas[module_idx].dependencies.iter().copied().filter(|dep_idx| {
             !tree_shaking || self.module_table[*dep_idx].side_effects().has_side_effects()
           }))
@@ -241,9 +239,7 @@ impl LinkStage<'_> {
             )
             .collect()
         } else {
-          extended_dependencies
-            .iter()
-            .copied()
+          symbol_dependencies()
             .chain(self.metas[module_idx].dependencies.iter().copied().filter(|dep_idx| {
               !tree_shaking
                 || self.entries.contains_key(dep_idx)
@@ -253,9 +249,10 @@ impl LinkStage<'_> {
         };
 
       let meta = &mut self.metas[module_idx];
-      meta.dependencies.extend(extended_dependencies);
+      meta.dependencies.extend(symbol_dependencies());
       meta.load_dependencies = load_dependencies;
       meta.indirect_reexport_load_dependencies = indirect_reexport_load_dependencies;
+      meta.symbol_derived_dependencies = extended_dependencies;
       if let Some(execution_dependencies) = execution_dependencies {
         meta.execution_dependencies = execution_dependencies;
       }

@@ -77,6 +77,8 @@ pub struct LinkStageOutput {
   pub entry_point_to_reference_ids: FxHashMap<EntryPoint, Vec<ArcStr>>,
   pub global_constant_symbol_map: FxHashMap<SymbolRef, ConstExportMeta>,
   pub normal_symbol_exports_chain_map: FxHashMap<SymbolRef, Vec<SymbolRef>>,
+  /// See [`LinkStage::indirect_reexport_body_modules`]; the generate-stage facade replay must
+  /// reuse this stored set instead of recomputing it.
   pub indirect_reexport_body_modules: FxHashSet<ModuleIdx>,
   pub star_reexport_records_by_imported_symbol:
     FxHashMap<SymbolRef, Vec<Vec<(ModuleIdx, rolldown_common::ImportRecordIdx)>>>,
@@ -113,6 +115,12 @@ pub struct LinkStage<'a> {
   pub safely_merge_cjs_ns_map: FxHashMap<ModuleIdx, SafelyMergeCjsNsInfo>,
   pub dynamic_import_exports_usage_map: FxHashMap<ModuleIdx, DynamicImportExportsUsage>,
   pub normal_symbol_exports_chain_map: FxHashMap<SymbolRef, Vec<SymbolRef>>,
+  /// Side-effect-free ESM modules whose observable bodies execute when a locally imported binding
+  /// is used through an indirect re-export (`compute_indirect_reexport_body_modules`). Snapshotted
+  /// during `include_statements`, before `patch_module_dependencies` extends `meta.dependencies`
+  /// with symbol-derived owners: recomputing from the extended metadata would classify more
+  /// modules as body modules and let the generate-stage facade replay grow inclusion after chunk
+  /// assignment finished (the #10337 hazard class).
   pub indirect_reexport_body_modules: FxHashSet<ModuleIdx>,
   pub star_reexport_records_by_imported_symbol:
     FxHashMap<SymbolRef, Vec<Vec<(ModuleIdx, rolldown_common::ImportRecordIdx)>>>,

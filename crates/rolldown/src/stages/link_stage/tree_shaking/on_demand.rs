@@ -34,9 +34,11 @@ use crate::{
 /// or a locally imported binding is forwarded through an indirect re-export —
 /// e.g. `foo.bar = 1` stays once `foo` is demanded, and `#7597`'s top-level
 /// asserts stay because the entry imports the module's own `Modal`. This mirrors
-/// the lazy-barrel loader exactly: body demand loads every plain import record of
-/// the module, so a kept statement can never reference an unloaded record and a
-/// deferred record is only ever referenced by dropped statements.
+/// the lazy-barrel loader exactly: when a module has gated statements, demanding
+/// its body loads every plain import record (a pure forwarding body instead
+/// loads only its bare side-effect imports), so a kept statement can never
+/// reference an unloaded record and a deferred record is only ever referenced by
+/// dropped statements.
 ///
 /// Statements referencing no module-level symbol (a bare `console.log()`) and
 /// import/re-export statements (which drive wrapper init calls and side-effect

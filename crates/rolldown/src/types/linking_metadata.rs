@@ -85,6 +85,12 @@ pub struct LinkingMetadata {
   /// side-effect-free. Kept separately so cross-chunk linking can preserve only these
   /// symbol-specific execution edges without treating unrelated load dependencies as effects.
   pub indirect_reexport_load_dependencies: FxIndexSet<ModuleIdx>,
+  /// Subset of [`Self::load_dependencies`] derived from referenced symbols: the canonical owner
+  /// (and namespace-alias owner) of every symbol referenced by an included statement or an
+  /// entry-point chunk export, plus the runtime-helper edge. Recorded by
+  /// `patch_module_dependencies` so the already-loaded analysis can predict emitted imports
+  /// without re-walking statements (`predicted_static_import_targets`).
+  pub symbol_derived_dependencies: FxIndexSet<ModuleIdx>,
   /// Retained evaluation dependencies, excluding entry targets kept only for placement.
   pub execution_dependencies: FxIndexSet<ModuleIdx>,
   // `None` the member expression resolve to a ambiguous export.

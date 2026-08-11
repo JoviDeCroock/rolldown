@@ -157,8 +157,11 @@ impl BarrelInfo {
   /// - If `imports` is `Partial` with names:
   ///   - Named exports are resolved to their source records
   ///   - Missing names are searched in star re-exports
-  ///   - If any local export or indirect re-export is used, all ordinary import records must be
-  ///     loaded because the barrel module itself needs to execute
+  ///   - A used indirect re-export executes the barrel body, so its bare side-effect imports are
+  ///     loaded; a pure forwarding body keeps unrelated binding imports deferred
+  ///   - If any local export is used, or an indirect re-export is used while the body has
+  ///     side-effect statements of its own, all ordinary import records must be loaded because a
+  ///     retained body statement may reference any of them
   ///
   /// # Side effects
   /// - Consumes matched entries from `imported_exports_per_record`

@@ -84,10 +84,13 @@ impl EcmaViewMeta {
 ///
 /// This classification is the contract between the lazy-barrel loader and tree shaking's
 /// body-demand gating, and the two sides MUST agree. Own exports and indirect re-exports demand
-/// the barrel body and load every plain import record; direct re-exports do not. If they classified
-/// an export differently, a retained statement could reference an import record that was never
-/// loaded — a free identifier at runtime (the #9806 bug family). Keeping the classification in
-/// one place makes that agreement hold by construction.
+/// the barrel body: the loader then loads the barrel's bare side-effect imports always, and every
+/// plain import record once the body has side-effect statements of its own — only such statements
+/// are retained, so a pure forwarding body keeps unrelated binding imports deferred
+/// (`lazy_barrel_pure_indirect_reexport`). Direct re-exports load nothing beyond their own source
+/// record. If the two sides classified an export differently, a retained statement could reference
+/// an import record that was never loaded — a free identifier at runtime (the #9806 bug family).
+/// Keeping the classification in one place makes that agreement hold by construction.
 pub enum ExportOrigin<'a> {
   /// Declared by the module itself: `export const a = ...`, `export function f() {}`, or a plain
   /// `export { local }` of a local binding.
