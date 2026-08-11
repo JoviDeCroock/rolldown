@@ -9,7 +9,25 @@ source: crates/rolldown_testing/src/integration_test.rs
 //#region foo.js
 const foo = {};
 //#endregion
+//#region helper.js
+function modified() {
+	return "modified";
+}
+//#endregion
+//#region reexporter-indirect.js
+foo.indirect = modified();
+//#endregion
+//#region reexporter-chain-3.js
+foo.chain3 = "modified";
+//#endregion
+//#region reexporter-chain-2.js
+foo.chain2 = "modified";
+//#endregion
 //#region namespace-source.js
+const namespaceFoo = {};
+//#endregion
+//#region reexporter-namespace.js
+namespaceFoo.namespace = "modified";
 //#endregion
 //#region main.js
 const observed = {
@@ -17,7 +35,7 @@ const observed = {
 	fooDirect: foo,
 	fooChained: foo,
 	fooPure: foo,
-	namespaceFoo: {}
+	namespaceFoo
 };
 //#endregion
 export { observed };

@@ -175,7 +175,7 @@ impl<Fs: FileSystem + Clone + 'static> ModuleTask<Fs> {
 
     // Build lazy barrel info if the experimental flag is enabled
     let barrel_info = if self.flat_options.is_lazy_barrel_enabled() {
-      try_extract_lazy_barrel_info(&ecma_view, &raw_import_records)
+      try_extract_lazy_barrel_info(&ecma_view, &ecma_related.stmt_infos, &raw_import_records)
     } else {
       None
     };

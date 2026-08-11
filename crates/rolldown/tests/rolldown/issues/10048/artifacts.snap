@@ -6,10 +6,14 @@ source: crates/rolldown_testing/src/integration_test.rs
 ## entry.js
 
 ```js
-//#region data.js
+//#region helpers.js
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __commonJS = (cb, mod) => function() {
+	return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+};
 //#endregion
-//#region entry.js
-globalThis.__themes = {
+//#region data.js
+const themes = {
 	light: {
 		base: "light",
 		appBg: "#ffffff"
@@ -19,6 +23,22 @@ globalThis.__themes = {
 		appBg: "#000000"
 	}
 };
+//#endregion
+//#region theming.js
+var require_react_is = __commonJS({ "react-is.js"(exports) {
+	exports.isElement = function(x) {
+		return x != null && x.$$typeof === 1;
+	};
+} });
+__commonJS({ "hoist-non-react-statics.js"(exports, module) {
+	var reactIs = require_react_is();
+	module.exports = function hoist(target) {
+		return reactIs.isElement(target) ? target : target;
+	};
+} })();
+//#endregion
+//#region entry.js
+globalThis.__themes = themes;
 function getProjectAnnotations() {
 	return [globalThis.__themes];
 }
@@ -35,6 +55,18 @@ export { getProjectAnnotations };
 
 ```js
 // HIDDEN [\0rolldown/runtime.js]
+//#region helpers.js
+var __getOwnPropNames, __commonJS, __toESM;
+function init_helpers() {
+	return (init_helpers = __esmMin((() => {
+		__getOwnPropNames = Object.getOwnPropertyNames;
+		__commonJS = (cb, mod) => function() {
+			return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+		};
+		__toESM = (mod) => ({ default: mod });
+	})))();
+}
+//#endregion
 //#region data.js
 var themes;
 function init_data() {
@@ -52,13 +84,34 @@ function init_data() {
 	})))();
 }
 //#endregion
+//#region theming.js
+var require_react_is, require_hoist_non_react_statics;
+function init_theming() {
+	return (init_theming = __esmMin((() => {
+		init_helpers();
+		init_data();
+		require_react_is = __commonJS({ "react-is.js"(exports) {
+			exports.isElement = function(x) {
+				return x != null && x.$$typeof === 1;
+			};
+		} });
+		require_hoist_non_react_statics = __commonJS({ "hoist-non-react-statics.js"(exports, module) {
+			var reactIs = require_react_is();
+			module.exports = function hoist(target) {
+				return reactIs.isElement(target) ? target : target;
+			};
+		} });
+		__toESM(require_hoist_non_react_statics());
+	})))();
+}
+//#endregion
 //#region entry.js
 function getProjectAnnotations() {
 	return [globalThis.__themes];
 }
 function init_entry() {
 	return (init_entry = __esmMin((() => {
-		init_data();
+		init_theming();
 		globalThis.__themes = themes;
 	})))();
 }

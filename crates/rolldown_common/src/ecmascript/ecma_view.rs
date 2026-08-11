@@ -83,11 +83,9 @@ impl EcmaViewMeta {
 /// import.
 ///
 /// This classification is the contract between the lazy-barrel loader and tree shaking's
-/// body-demand gating, and the two sides MUST agree: the loader loads every plain import record
-/// of a barrel as soon as one of its *own* exports is requested (`BarrelInfo::local` in
-/// `take_needed_records`), and tree shaking includes the module's gated side-effect statements as
-/// soon as one of its *own* exports is used (`compute_body_demand_keys`). If they classified an
-/// export differently, a retained statement could reference an import record that was never
+/// body-demand gating, and the two sides MUST agree. Own exports and indirect re-exports demand
+/// the barrel body and load every plain import record; direct re-exports do not. If they classified
+/// an export differently, a retained statement could reference an import record that was never
 /// loaded — a free identifier at runtime (the #9806 bug family). Keeping the classification in
 /// one place makes that agreement hold by construction.
 pub enum ExportOrigin<'a> {

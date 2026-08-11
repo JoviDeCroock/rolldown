@@ -2,12 +2,15 @@
 //! side-effect-free modules. See [`side_effects_included_on_demand`] for the model.
 
 use rolldown_common::{
-  ExportOrigin, ExportsKind, IndexModules, Module, ModuleIdx, NormalModule, StmtInfo, SymbolRef,
-  SymbolRefDb, side_effects::DeterminedSideEffects,
+  ExportOrigin, ExportsKind, ImportRecordMeta, IndexModules, Module, ModuleIdx, NormalModule,
+  StmtInfo, SymbolRef, SymbolRefDb, side_effects::DeterminedSideEffects,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::{stages::link_stage::LinkStage, type_alias::IndexStmtInfos};
+use crate::{
+  stages::link_stage::LinkStage, type_alias::IndexStmtInfos,
+  types::linking_metadata::LinkingMetadataVec,
+};
 
 /// Whether side-effectful statements of `module` that reference module-level
 /// symbols are included on demand instead of being swept in unconditionally by
@@ -27,14 +30,13 @@ use crate::{stages::link_stage::LinkStage, type_alias::IndexStmtInfos};
 /// (#9691, #9806, #9961, #9964, #10013, #10048).
 ///
 /// Instead such statements join when the module's *body* is demanded: one of
-/// its own (non-re-export) exports or its namespace object becomes used (via
-/// `body_demand_keys`) — e.g. `foo.bar = 1` stays once `foo` is
-/// demanded, `#7597`'s top-level asserts stay because the entry imports the
-/// module's own `Modal`. This mirrors the lazy-barrel loader exactly: body
-/// demand is its `has_local_export`/`All` case, in which it loads every plain
-/// import record of the module — so a kept statement can never reference an
-/// unloaded record, and a deferred record is only ever referenced by dropped
-/// statements.
+/// its own exports or its namespace object becomes used (via `body_demand_keys`),
+/// or a locally imported binding is forwarded through an indirect re-export —
+/// e.g. `foo.bar = 1` stays once `foo` is demanded, and `#7597`'s top-level
+/// asserts stay because the entry imports the module's own `Modal`. This mirrors
+/// the lazy-barrel loader exactly: body demand loads every plain import record of
+/// the module, so a kept statement can never reference an unloaded record and a
+/// deferred record is only ever referenced by dropped statements.
 ///
 /// Statements referencing no module-level symbol (a bare `console.log()`) and
 /// import/re-export statements (which drive wrapper init calls and side-effect
@@ -54,15 +56,44 @@ pub(super) fn side_effects_included_on_demand(
     && !entry_module_idxs.contains(&module.idx)
 }
 
+/// Precompute side-effect-free ESM modules whose observable bodies must execute when one of their
+/// locally imported bindings is used through an indirect re-export.
+pub(super) fn compute_indirect_reexport_body_modules(
+  modules: &IndexModules,
+  stmt_infos: &IndexStmtInfos,
+  metas: &LinkingMetadataVec,
+  treeshake_enabled: bool,
+  entry_module_idxs: &FxHashSet<ModuleIdx>,
+) -> FxHashSet<ModuleIdx> {
+  if !treeshake_enabled {
+    return FxHashSet::default();
+  }
+
+  modules
+    .iter()
+    .filter_map(Module::as_normal)
+    .filter(|module| side_effects_included_on_demand(module, entry_module_idxs))
+    .filter(|module| {
+      stmt_infos[module.idx].iter_enumerated_without_namespace_stmt().any(|(_, stmt_info)| {
+        !stmt_info.force_tree_shaking && stmt_info.eval_flags.has_side_effect_for_tree_shaking()
+      }) || metas[module.idx]
+        .dependencies
+        .iter()
+        .any(|dependency_idx| modules[*dependency_idx].side_effects().has_side_effects())
+    })
+    .map(|module| module.idx)
+    .collect()
+}
+
 /// Build the demand edges for modules whose side-effectful statements are
 /// included on demand (see [`side_effects_included_on_demand`]): body-demand
 /// key -> the module whose gated side-effect statements it demands.
 ///
-/// A module's body counts as demanded when one of its *own* exports (an export
-/// that doesn't re-export an import) or its namespace object becomes used —
-/// mirroring the lazy-barrel loader's `local` classification, which loads every
-/// plain import record of the module exactly in those cases. Demand through
-/// pure re-exports leaves the body dropped.
+/// A module's body counts as demanded through this map when one of its *own*
+/// exports or its namespace object becomes used. Used indirect re-exports also
+/// demand the body, but are discovered from `normal_symbol_exports_chain_map`
+/// during symbol inclusion because their local import symbols canonicalize to
+/// another module. Direct re-exports leave the body dropped.
 ///
 /// The gated statements themselves are enumerated at demand time (they are a pure
 /// function of the immutable `stmt_infos`); this map only answers "whose body does
@@ -119,7 +150,69 @@ pub(super) fn is_gated_side_effect_stmt(stmt_info: &StmtInfo) -> bool {
     && stmt_info.import_records.is_empty()
 }
 
+/// Invoke `f` with each indirect re-exporter body module traversed by `symbol_ref`.
+///
+/// Direct re-exports have a dedicated `IsReExportOnly` record and do not execute the surrounding
+/// module when only the forwarded binding is used. Indirect re-exports share the module's ordinary
+/// import record, so using them executes the module and retains its side effects. Symbol inclusion
+/// uses this walk to demand the bodies (`demand_indirect_reexporter_bodies`), and
+/// `patch_module_dependencies` uses the same walk to record the matching load edges — the two
+/// sides must agree, or a demanded body could land in a chunk nothing imports.
+pub(in crate::stages::link_stage) fn for_each_indirect_reexporter_body(
+  symbol_ref: SymbolRef,
+  modules: &IndexModules,
+  normal_symbol_exports_chain_map: &FxHashMap<SymbolRef, Vec<SymbolRef>>,
+  indirect_reexport_body_modules: &FxHashSet<ModuleIdx>,
+  mut f: impl FnMut(ModuleIdx),
+) {
+  if indirect_reexport_body_modules.is_empty() {
+    return;
+  }
+  let reexports = normal_symbol_exports_chain_map.get(&symbol_ref).into_iter().flatten();
+  for reexport_ref in std::iter::once(&symbol_ref).chain(reexports) {
+    let Some(module) = modules[reexport_ref.owner].as_normal() else {
+      continue;
+    };
+    let Some(named_import) = module.named_imports.get(reexport_ref) else {
+      continue;
+    };
+    if indirect_reexport_body_modules.contains(&module.idx)
+      && !module.import_records[named_import.record_idx]
+        .meta
+        .contains(ImportRecordMeta::IsReExportOnly)
+    {
+      f(module.idx);
+    }
+  }
+}
+
 impl LinkStage<'_> {
+  /// Precomputed inputs for on-demand body inclusion: the body-demand key map and the indirect
+  /// re-exporter body module set ([`compute_body_demand_keys`],
+  /// [`compute_indirect_reexport_body_modules`]).
+  pub(super) fn compute_on_demand_inclusion_inputs(
+    &self,
+    entry_module_idxs: &FxHashSet<ModuleIdx>,
+  ) -> (FxHashMap<SymbolRef, ModuleIdx>, FxHashSet<ModuleIdx>) {
+    let treeshake_enabled = self.options.treeshake.is_some();
+    (
+      compute_body_demand_keys(
+        &self.module_table.modules,
+        &self.stmt_infos,
+        &self.symbols,
+        treeshake_enabled,
+        entry_module_idxs,
+      ),
+      compute_indirect_reexport_body_modules(
+        &self.module_table.modules,
+        &self.stmt_infos,
+        &self.metas,
+        treeshake_enabled,
+        entry_module_idxs,
+      ),
+    )
+  }
+
   /// User-defined (and emitted) entries — exempt from on-demand side-effect
   /// gating: they are the requested program. A dynamic entry participates like
   /// any module: an observed namespace or used export is body demand, while a

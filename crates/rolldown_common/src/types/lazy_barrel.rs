@@ -7,7 +7,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
   EcmaView, ExportOrigin, ImportKind, ImportRecordIdx, ImportRecordMeta, ImportRecordStateInit,
-  ModuleIdx, NormalModule, RawImportRecord, ResolvedId, Specifier,
+  ModuleIdx, NormalModule, RawImportRecord, ResolvedId, Specifier, StmtInfos,
   side_effects::DeterminedSideEffects,
 };
 
@@ -133,8 +133,13 @@ pub struct ExportSource {
 
 #[derive(Debug, Default, Clone)]
 pub struct BarrelInfo {
+  /// Whether executing the barrel has observable work beyond forwarding bindings.
+  pub body_has_side_effects: bool,
   /// `export const a = 1`
   pub local: Vec<CompactStr>,
+  /// Ordinary bare imports that must be loaded when the barrel executes, but do not by themselves
+  /// require unrelated binding imports to be loaded.
+  pub bare_imports: Vec<ImportRecordIdx>,
   /// `export * from './x'`
   pub star: Vec<ImportRecordIdx>,
   /// `export { a } from './x'` or `export * as ns from './x'`
@@ -152,13 +157,13 @@ impl BarrelInfo {
   /// - If `imports` is `Partial` with names:
   ///   - Named exports are resolved to their source records
   ///   - Missing names are searched in star re-exports
-  ///   - If any local (own) export is used, all non-re-export import records must be loaded
-  ///     (since the barrel module itself needs to execute)
+  ///   - If any local export or indirect re-export is used, all ordinary import records must be
+  ///     loaded because the barrel module itself needs to execute
   ///
   /// # Side effects
   /// - Consumes matched entries from `imported_exports_per_record`
   /// - Removes matched entries from `self.named`
-  /// - Clears `self.local` if a local export is used
+  /// - Clears `self.local` if the barrel body is demanded
   pub fn take_needed_records(
     &mut self,
     imports: &ImportedExports,
@@ -168,11 +173,17 @@ impl BarrelInfo {
       ImportedExports::All => std::mem::take(imported_exports_per_record),
       ImportedExports::Partial(names) if names.is_empty() => FxHashMap::default(),
       ImportedExports::Partial(names) => {
-        let has_local_export = self.local.iter().any(|name| names.contains(name));
+        let mut has_body_demand = self.local.iter().any(|name| names.contains(name));
+        let mut has_indirect_reexport_demand = false;
         let mut needs_records = FxHashMap::with_capacity(names.len());
         let mut missing_names = FxHashSet::default();
         for name in names {
           if let Some(export_source) = self.named.remove(name) {
+            // `import { value }; export { value }` executes the barrel body when `value` is
+            // requested. Load its other ordinary imports as well so retained body statements
+            // cannot reference a deferred record. A direct `export { value } from` does not.
+            has_indirect_reexport_demand |= !export_source.is_direct_reexport;
+            has_body_demand |= !export_source.is_direct_reexport && self.body_has_side_effects;
             match export_source.imported {
               // `export * as ns from './x'` - request All from source
               Specifier::Star => {
@@ -228,7 +239,14 @@ impl BarrelInfo {
             }
           }
         }
-        if has_local_export {
+        if has_indirect_reexport_demand {
+          for rec_idx in &self.bare_imports {
+            if let Some(imported_exports) = imported_exports_per_record.remove(rec_idx) {
+              needs_records.entry(*rec_idx).or_insert(imported_exports);
+            }
+          }
+        }
+        if has_body_demand {
           let mut reexports = FxHashSet::with_capacity(self.named.len() + self.star.len());
           reexports
             .extend(self.named.values().filter(|v| v.is_direct_reexport).map(|v| v.record_idx));
@@ -282,6 +300,7 @@ pub struct LazyBarrelInfo {
 /// Try to extract BarrelInfo from EcmaView for lazy barrel optimization
 pub fn try_extract_lazy_barrel_info(
   ecma_view: &EcmaView,
+  stmt_infos: &StmtInfos,
   raw_import_records: &IndexVec<ImportRecordIdx, RawImportRecord>,
 ) -> Option<BarrelInfo> {
   // Barrel modules must be user-defined side-effect-free and have import records
@@ -291,7 +310,25 @@ pub fn try_extract_lazy_barrel_info(
     return None;
   }
 
-  let mut barrel_info = BarrelInfo::default();
+  let binding_import_records: FxHashSet<ImportRecordIdx> =
+    ecma_view.named_imports.values().map(|named_import| named_import.record_idx).collect();
+  let mut barrel_info = BarrelInfo {
+    body_has_side_effects: stmt_infos
+      .iter_enumerated_without_namespace_stmt()
+      .any(|(_, stmt_info)| stmt_info.eval_flags.has_side_effect_for_tree_shaking()),
+    bare_imports: raw_import_records
+      .iter_enumerated()
+      .filter_map(|(record_idx, record)| {
+        (record.kind == ImportKind::Import
+          && !binding_import_records.contains(&record_idx)
+          && !record
+            .meta
+            .intersects(ImportRecordMeta::IsReExportOnly | ImportRecordMeta::IsExportStar))
+        .then_some(record_idx)
+      })
+      .collect(),
+    ..Default::default()
+  };
 
   // Find star exports from import records
   for (rec_idx, record) in raw_import_records.iter_enumerated() {

@@ -1435,6 +1435,34 @@ impl GenerateStage<'_> {
             imports_from_other_chunks.entry(importee_chunk_idx).or_default();
           }
 
+          // A used binding can resolve through a package-declared side-effect-free indirect
+          // re-exporter whose observable body was retained during tree shaking. The symbol-derived
+          // load edge is not represented by an import record in the consuming module, so preserve
+          // it as a bare chunk import even though the re-exporter's package metadata says it is
+          // side-effect-free. Targets are always non-entry ESM modules classified as
+          // `UserDefined(false)` by `side_effects_included_on_demand`; this keeps the loop
+          // disjoint from the side-effectful import-record loop and aligned with
+          // `predicted_static_import_targets` in the already-loaded analysis.
+          for dep_idx in &self.link_output.metas[module_idx].indirect_reexport_load_dependencies {
+            // Wrapped modules execute through `init_*` instead of eager bare imports.
+            // Import-record-derived obligations provide that call; multi-hop symbol-only routes
+            // under wrap-all strict execution remain a known init-obligation gap.
+            if self.options.is_strict_execution_order_enabled()
+              && order_state.esm_init_target(*dep_idx, &self.link_output.metas[*dep_idx]).is_some()
+            {
+              continue;
+            }
+            let Some(importee_chunk_idx) = chunk_graph.module_to_chunk[*dep_idx] else {
+              continue;
+            };
+            if importee_chunk_idx == chunk_id {
+              continue;
+            }
+            index_cross_chunk_imports[chunk_id].insert(importee_chunk_idx);
+            let imports_from_other_chunks = &mut index_imports_from_other_chunks[chunk_id];
+            imports_from_other_chunks.entry(importee_chunk_idx).or_default();
+          }
+
           // Runtime module may have side effects (e.g. dev/HMR mode) without an import record.
           if self.link_output.metas[module_idx].has_side_effectful_runtime_dep {
             let runtime_idx = self.link_output.runtime.id();

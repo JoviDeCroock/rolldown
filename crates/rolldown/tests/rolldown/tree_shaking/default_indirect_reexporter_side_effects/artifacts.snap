@@ -17,6 +17,12 @@ var reexporter_chain_5_default = foo;
 reexporter_chain_5_default.chain4 = "modified";
 var reexporter_chain_4_default = reexporter_chain_5_default;
 //#endregion
+//#region reexporter-chain-3.js
+reexporter_chain_4_default.chain3 = "modified";
+//#endregion
+//#region reexporter-chain-2.js
+reexporter_chain_4_default.chain2 = "modified";
+//#endregion
 export { reexporter_chain_4_default as foo };
 
 ```

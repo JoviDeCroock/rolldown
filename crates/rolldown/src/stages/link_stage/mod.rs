@@ -77,6 +77,7 @@ pub struct LinkStageOutput {
   pub entry_point_to_reference_ids: FxHashMap<EntryPoint, Vec<ArcStr>>,
   pub global_constant_symbol_map: FxHashMap<SymbolRef, ConstExportMeta>,
   pub normal_symbol_exports_chain_map: FxHashMap<SymbolRef, Vec<SymbolRef>>,
+  pub indirect_reexport_body_modules: FxHashSet<ModuleIdx>,
   pub star_reexport_records_by_imported_symbol:
     FxHashMap<SymbolRef, Vec<Vec<(ModuleIdx, rolldown_common::ImportRecordIdx)>>>,
   pub user_defined_entry_modules: FxHashSet<ModuleIdx>,
@@ -112,6 +113,7 @@ pub struct LinkStage<'a> {
   pub safely_merge_cjs_ns_map: FxHashMap<ModuleIdx, SafelyMergeCjsNsInfo>,
   pub dynamic_import_exports_usage_map: FxHashMap<ModuleIdx, DynamicImportExportsUsage>,
   pub normal_symbol_exports_chain_map: FxHashMap<SymbolRef, Vec<SymbolRef>>,
+  pub indirect_reexport_body_modules: FxHashSet<ModuleIdx>,
   pub star_reexport_records_by_imported_symbol:
     FxHashMap<SymbolRef, Vec<Vec<(ModuleIdx, rolldown_common::ImportRecordIdx)>>>,
   pub external_import_namespace_merger: FxHashMap<ModuleIdx, FxIndexSet<SymbolRef>>,
@@ -218,6 +220,7 @@ impl<'a> LinkStage<'a> {
       used_external_symbols: UsedExternalSymbols::default(),
       safely_merge_cjs_ns_map: FxHashMap::default(),
       normal_symbol_exports_chain_map: FxHashMap::default(),
+      indirect_reexport_body_modules: FxHashSet::default(),
       star_reexport_records_by_imported_symbol: FxHashMap::default(),
       external_import_namespace_merger: FxHashMap::default(),
       overrode_preserve_entry_signature_map: scan_stage_output
@@ -268,6 +271,7 @@ impl<'a> LinkStage<'a> {
         entry_point_to_reference_ids: self.entry_point_to_reference_ids,
         global_constant_symbol_map: self.global_constant_symbol_map,
         normal_symbol_exports_chain_map: self.normal_symbol_exports_chain_map,
+        indirect_reexport_body_modules: self.indirect_reexport_body_modules,
         star_reexport_records_by_imported_symbol: self.star_reexport_records_by_imported_symbol,
         user_defined_entry_modules: self.user_defined_entry_modules,
         has_enum_inlining: self.has_enum_inlining,
