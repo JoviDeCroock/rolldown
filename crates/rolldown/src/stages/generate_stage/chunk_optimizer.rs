@@ -293,14 +293,6 @@ impl ChunkOptimizationGraph {
   }
 }
 
-/// Result of assigning modules during chunk optimization.
-enum ChunkAssignment {
-  /// Modules were merged into an existing entry chunk (chunk_graph index).
-  Merged(ChunkIdx),
-  /// A new common chunk was created in chunk_graph (chunk_graph index).
-  Created(ChunkIdx),
-}
-
 impl GenerateStage<'_> {
   /// Constructs a mapping from static entry chunks to the dynamic entry chunks they can reach.
   ///
@@ -406,98 +398,93 @@ impl GenerateStage<'_> {
         }
         let chunk_idxs: Vec<_> = bits.index_of_one().map(ChunkIdx::from_raw).collect();
 
-        let merge_target = self.try_insert_into_existing_chunk(
-          &chunk_idxs,
-          &static_entry_chunk_reference,
-          chunk_graph,
-          &dynamic_entry_to_dynamic_importers,
-          temp_chunk,
-          temp_chunk_graph,
-        );
+        let merge_target = self
+          .try_insert_into_existing_chunk(
+            &chunk_idxs,
+            &static_entry_chunk_reference,
+            chunk_graph,
+            &dynamic_entry_to_dynamic_importers,
+            temp_chunk,
+            temp_chunk_graph,
+          )
+          .filter(|&target_chunk_idx| {
+            self.merge_target_accepts_modules(
+              &chunk_graph.chunk_table[target_chunk_idx],
+              &temp_chunk.modules,
+            )
+          });
 
         Some((bits.clone(), *temp_chunk_idx, chunk_idxs, merge_target))
       })
       .collect();
 
-    // Second pass: apply chunk assignments
-    for (bits, temp_chunk_idx, chunk_idxs, merge_target) in assignments {
-      // Check if merging would create a circular dependency
-      let merge_target = match merge_target {
-        Some(target_chunk_idx)
-          if temp_chunk_graph
-            .would_create_circular_dependency(temp_chunk_idx, target_chunk_idx) =>
-        {
-          // Skip merge if it would create a circular dependency
-          None
+    // Second pass: merge what can be merged. A merge that would close a chunk cycle can become
+    // legal once *other* merges collapse the chunks that formed that cycle, so blocked candidates
+    // are retried until a round either merges nothing new or leaves nothing blocked (issue #9963).
+    // Merging is the only thing that happens here; the candidates that never find a home are
+    // created below in the original order, so chunk creation stays independent of how many rounds
+    // it took.
+    let mut merged = vec![false; assignments.len()];
+    loop {
+      let mut merged_any = false;
+      let mut blocked_any = false;
+      for (idx, (_, temp_chunk_idx, chunk_idxs, merge_target)) in assignments.iter().enumerate() {
+        if merged[idx] {
+          continue;
         }
-        other => other,
-      };
-
-      let temp_modules = &temp_chunk_graph.chunks[temp_chunk_idx].modules;
-      match self.assign_modules_to_chunk(
-        merge_target,
-        &chunk_idxs,
-        temp_modules,
-        &bits,
-        chunk_graph,
-        bits_to_chunk,
-        input_base,
-      ) {
-        ChunkAssignment::Merged(target_chunk_idx) => {
-          // Merge chunk dependencies immediately after successful merge
-          temp_chunk_graph.merge_chunk_dependencies(target_chunk_idx, temp_chunk_idx);
+        let Some(target_chunk_idx) = *merge_target else {
+          continue;
+        };
+        // Skip merge if it would create a circular dependency
+        if temp_chunk_graph.would_create_circular_dependency(*temp_chunk_idx, target_chunk_idx) {
+          blocked_any = true;
+          continue;
         }
-        ChunkAssignment::Created(new_chunk_id) => {
-          temp_chunk_graph.register_chunk_graph_index(new_chunk_id, temp_chunk_idx);
-        }
+        let temp_modules = &temp_chunk_graph.chunks[*temp_chunk_idx].modules;
+        self.merge_modules_into_existing_chunk(
+          target_chunk_idx,
+          chunk_idxs,
+          temp_modules,
+          chunk_graph,
+        );
+        // Merge chunk dependencies immediately after successful merge
+        temp_chunk_graph.merge_chunk_dependencies(target_chunk_idx, *temp_chunk_idx);
+        merged[idx] = true;
+        merged_any = true;
       }
+      // Nothing left to unblock, or nothing moved to unblock it with.
+      if !blocked_any || !merged_any {
+        break;
+      }
+    }
+
+    // Third pass: materialize the candidates that stayed on their own.
+    for (idx, (bits, temp_chunk_idx, _, _)) in assignments.iter().enumerate() {
+      if merged[idx] {
+        continue;
+      }
+      let temp_modules = &temp_chunk_graph.chunks[*temp_chunk_idx].modules;
+      let new_chunk_id =
+        self.create_common_chunk(temp_modules, bits, chunk_graph, bits_to_chunk, input_base);
+      temp_chunk_graph.register_chunk_graph_index(new_chunk_id, *temp_chunk_idx);
     }
   }
 
-  /// Assigns modules to either an existing entry chunk or a new common chunk.
+  /// Whether `chunk` may really absorb `modules`, or whether `preserveEntrySignatures: 'strict'`
+  /// forces them into a separate common chunk.
   ///
-  /// If a valid merge target is found (and it doesn't have strict entry signature preservation),
-  /// modules are merged into that existing chunk. Otherwise, a new common chunk is created.
-  #[expect(clippy::too_many_arguments)]
-  fn assign_modules_to_chunk(
-    &self,
-    merge_target: Option<ChunkIdx>,
-    chunk_idxs: &[ChunkIdx],
-    modules: &[ModuleIdx],
-    bits: &BitSet,
-    chunk_graph: &mut ChunkGraph,
-    bits_to_chunk: &mut FxHashMap<BitSet, ChunkIdx>,
-    input_base: &ArcStr,
-  ) -> ChunkAssignment {
-    match merge_target {
-      Some(chunk_idx) => {
-        let chunk = &chunk_graph.chunk_table[chunk_idx];
-        let is_async_entry_only = matches!(chunk.kind, ChunkKind::EntryPoint { meta, .. } if meta == ChunkMeta::DynamicImported);
-        if matches!(chunk.preserve_entry_signature, Some(PreserveEntrySignatures::Strict)) {
-          // We can safely merge into this chunk in two scenarios:
-          // 1. The target chunk is an async entry - dynamic chunks are not restricted by `PreserveEntrySignatures`.
-          // 2. The target chunk has strict signature preservation, but the modules being merged won't alter
-          //    the entry's exported interface (they either have no exports or only re-export existing entry symbols).
-          if is_async_entry_only || self.can_merge_without_changing_entry_signature(chunk, modules)
-          {
-            self.merge_modules_into_existing_chunk(chunk_idx, chunk_idxs, modules, chunk_graph);
-            ChunkAssignment::Merged(chunk_idx)
-          } else {
-            let new_chunk_id =
-              self.create_common_chunk(modules, bits, chunk_graph, bits_to_chunk, input_base);
-            ChunkAssignment::Created(new_chunk_id)
-          }
-        } else {
-          self.merge_modules_into_existing_chunk(chunk_idx, chunk_idxs, modules, chunk_graph);
-          ChunkAssignment::Merged(chunk_idx)
-        }
-      }
-      _ => {
-        let new_chunk_id =
-          self.create_common_chunk(modules, bits, chunk_graph, bits_to_chunk, input_base);
-        ChunkAssignment::Created(new_chunk_id)
-      }
+  /// A merge is allowed in two scenarios:
+  /// 1. The target chunk is an async entry - dynamic chunks are not restricted by
+  ///    `PreserveEntrySignatures`.
+  /// 2. The target chunk has strict signature preservation, but the modules being merged won't
+  ///    alter the entry's exported interface (they either have no exports or only re-export
+  ///    existing entry symbols).
+  fn merge_target_accepts_modules(&self, chunk: &Chunk, modules: &[ModuleIdx]) -> bool {
+    if !matches!(chunk.preserve_entry_signature, Some(PreserveEntrySignatures::Strict)) {
+      return true;
     }
+    matches!(chunk.kind, ChunkKind::EntryPoint { meta, .. } if meta == ChunkMeta::DynamicImported)
+      || self.can_merge_without_changing_entry_signature(chunk, modules)
   }
 
   /// Merges modules into an existing entry chunk.

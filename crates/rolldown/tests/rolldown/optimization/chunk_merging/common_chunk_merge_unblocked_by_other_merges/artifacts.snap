@@ -3,7 +3,7 @@ source: crates/rolldown_testing/src/integration_test.rs
 ---
 # Assets
 
-## c1.js
+## main.js
 
 ```js
 //#region common.js
@@ -12,14 +12,6 @@ const common = "common-base";
 //#region c1.js
 const c1 = `c1:${common}`;
 //#endregion
-export { common as n, c1 as t };
-
-```
-
-## main.js
-
-```js
-import { n as common, t as c1 } from "./c1.js";
 //#region c2.js
 const c2 = `c2:${c1}`;
 //#endregion
@@ -40,14 +32,14 @@ console.log([
 ].join("|"));
 globalThis.fixtureLoadRoute = (route) => routes[route - 1]();
 //#endregion
-export { c2 as n, c3 as t };
+export { common as i, c2 as n, c1 as r, c3 as t };
 
 ```
 
 ## r1.js
 
 ```js
-import { n as common, t as c1 } from "./c1.js";
+import { i as common, r as c1 } from "./main.js";
 //#region r1.js
 var r1_default = () => `r1:${common}:${c1}`;
 //#endregion
@@ -58,8 +50,7 @@ export { r1_default as default };
 ## r2.js
 
 ```js
-import { t as c1 } from "./c1.js";
-import { n as c2 } from "./main.js";
+import { n as c2, r as c1 } from "./main.js";
 //#region r2.js
 var r2_default = () => `r2:${c1}:${c2}`;
 //#endregion
