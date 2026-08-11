@@ -1,8 +1,7 @@
 import assert from 'node:assert';
-// #10048: importing the built entry must not throw. Before the fix the emitted
-// chunk called `__commonJS(...)` / `__toESM(...)` without declaring or importing
-// them (their defining module `helpers.js` was tree-shaken away), so this import
-// threw `ReferenceError: __commonJS is not defined` at module-load time.
+// #10048: importing the built entry must not throw. The used indirect re-export
+// retains theming.js's helper calls, so helpers.js must remain reachable too;
+// otherwise this import throws `ReferenceError: __commonJS is not defined`.
 import { getProjectAnnotations } from './dist/entry.js';
 
 assert.deepStrictEqual(getProjectAnnotations(), [

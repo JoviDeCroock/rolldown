@@ -1,0 +1,79 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## c1.js
+
+```js
+//#region common.js
+const common = "common-base";
+//#endregion
+//#region c1.js
+const c1 = `c1:${common}`;
+//#endregion
+export { common as n, c1 as t };
+
+```
+
+## main.js
+
+```js
+import { n as common, t as c1 } from "./c1.js";
+//#region c2.js
+const c2 = `c2:${c1}`;
+//#endregion
+//#region c3.js
+const c3 = `c3:${c2}`;
+//#endregion
+//#region main.js
+const routes = [
+	() => import("./r1.js"),
+	() => import("./r2.js"),
+	() => import("./r3.js")
+];
+console.log([
+	common,
+	c1,
+	c2,
+	c3
+].join("|"));
+globalThis.fixtureLoadRoute = (route) => routes[route - 1]();
+//#endregion
+export { c2 as n, c3 as t };
+
+```
+
+## r1.js
+
+```js
+import { n as common, t as c1 } from "./c1.js";
+//#region r1.js
+var r1_default = () => `r1:${common}:${c1}`;
+//#endregion
+export { r1_default as default };
+
+```
+
+## r2.js
+
+```js
+import { t as c1 } from "./c1.js";
+import { n as c2 } from "./main.js";
+//#region r2.js
+var r2_default = () => `r2:${c1}:${c2}`;
+//#endregion
+export { r2_default as default };
+
+```
+
+## r3.js
+
+```js
+import { n as c2, t as c3 } from "./main.js";
+//#region r3.js
+var r3_default = () => `r3:${c2}:${c3}`;
+//#endregion
+export { r3_default as default };
+
+```

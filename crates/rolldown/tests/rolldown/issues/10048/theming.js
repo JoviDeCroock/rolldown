@@ -2,10 +2,9 @@
 // helpers.js and CALLS them at the top level to wrap a CommonJS chain, AND it
 // re-exports `themes` (from data.js), which does NOT depend on the helpers.
 //
-// Under viteMode this whole module body is kept as one lazy init once the module
-// is reached, so the __commonJS / __toESM calls below survive. But because the
-// only export the entry uses (`themes`) is a helper-independent passthrough,
-// export-level tree-shaking drops helpers.js -> the calls below have no binding.
+// Because `themes` is forwarded through a local import, using it executes this
+// indirect re-exporter's body. The __commonJS / __toESM calls below therefore
+// survive, and their helpers must remain reachable as well.
 import { __commonJS, __toESM } from './helpers.js';
 import { themes } from './data.js';
 

@@ -1,0 +1,22 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+//#region foo.js
+const foo = {};
+//#endregion
+//#region reexporter-chain-5.js
+foo.chain5 = "modified";
+var reexporter_chain_5_default = foo;
+//#endregion
+//#region reexporter-chain-4.js
+reexporter_chain_5_default.chain4 = "modified";
+var reexporter_chain_4_default = reexporter_chain_5_default;
+//#endregion
+export { reexporter_chain_4_default as foo };
+
+```

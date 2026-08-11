@@ -1,0 +1,22 @@
+{
+  "configName": "default",
+  "config": {
+    "input": [
+      {
+        "name": "entry",
+        "import": "./entry.js"
+      }
+    ]
+  },
+  "configVariants": [
+    {
+      "_configName": "strict-on-demand",
+      "strictExecutionOrder": true,
+      "onDemandWrapping": true
+    },
+    {
+      "_configName": "preserve-modules",
+      "preserveModules": true
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "config": {
+    "strictExecutionOrder": true,
+    "experimental": {
+      "lazyBarrel": true,
+      "onDemandWrapping": true
+    },
+    "treeshake": {
+      "moduleSideEffects": false
+    }
+  }
+}

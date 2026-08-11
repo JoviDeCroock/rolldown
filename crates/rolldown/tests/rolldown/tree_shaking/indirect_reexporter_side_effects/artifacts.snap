@@ -1,0 +1,25 @@
+---
+source: crates/rolldown_testing/src/integration_test.rs
+---
+# Assets
+
+## main.js
+
+```js
+//#region foo.js
+const foo = {};
+//#endregion
+//#region namespace-source.js
+//#endregion
+//#region main.js
+const observed = {
+	fooIndirect: foo,
+	fooDirect: foo,
+	fooChained: foo,
+	fooPure: foo,
+	namespaceFoo: {}
+};
+//#endregion
+export { observed };
+
+```
